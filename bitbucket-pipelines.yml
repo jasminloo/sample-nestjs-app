@@ -1,0 +1,51 @@
+definitions:
+  steps:
+    - step: &test
+        caches:
+          - node
+        image: node:18.18.1
+        name: Install and Test
+        script:
+          - npm ci 
+          - npm run test
+    - step: &setup
+        image: hashicorp/terraform:1.6.0
+        name: Set Up AWS
+        script:
+          - mkdir -p ~/.aws
+          - echo -e "[default]\naws_access_key_id = $AWS_CENTRAL_ACCESS_KEY_ID\naws_secret_access_key = $AWS_CENTRAL_SECRET_ACCESS_KEY" > ~/.aws/credentials
+          - cd ./terraform
+          - terraform init
+          - terraform plan 
+          - terraform apply -auto-approve
+    - step: &build-push
+        caches:
+          - docker
+        image: node:18.18.1
+        name: Build Docker Image and Push to Registry
+        script:
+          - mkdir -p ~/.aws
+          - echo -e "[default]\naws_access_key_id = $AWS_CENTRAL_ACCESS_KEY_ID\naws_secret_access_key = $AWS_CENTRAL_SECRET_ACCESS_KEY" > ~/.aws/credentials
+          - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+          - docker build -t $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/nestjs-app:latest .
+          - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/nestjs-app:latest
+        services:
+          - docker
+    - step: &deploy
+        image: atlassian/default-image:latest
+        name: Deploy to ECS from ECR
+        script:
+          - mkdir -p ~/.aws
+          - echo -e "[default]\naws_access_key_id = $AWS_CENTRAL_ACCESS_KEY_ID\naws_secret_access_key = $AWS_CENTRAL_SECRET_ACCESS_KEY" > ~/.aws/credentials
+          - aws ecs update-service --cluster $AWS_ECS_CLUSTER --service $AWS_ECS_SERVICE --region $AWS_REGION --force-new-deployment
+
+pipelines:
+  default: 
+    - step: *test
+  branches:
+    master: 
+      - step: *test
+      - step: *setup
+      - step: *build-push
+      - step: *deploy
+    
